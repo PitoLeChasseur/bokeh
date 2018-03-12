@@ -154,7 +154,7 @@ export class PatchesView extends GlyphView {
     }
   }
 
-  _hit_point(geometry: PointGeometry): Selection {
+  protected _hit_point(geometry: PointGeometry): Selection {
     const {sx, sy} = geometry;
 
     const x = this.renderer.xscale.invert(sx);
@@ -187,7 +187,7 @@ export class PatchesView extends GlyphView {
     return sum / array.length;
   }
 
-  scx(i, sx, sy) {
+  scenterx(i, sx, sy) {
     if (this.renderer.sxss[i].length === 1) {
       // We don't have discontinuous objects so we're ok
       return this._get_snap_coord(this.sxs[i]);
@@ -205,7 +205,7 @@ export class PatchesView extends GlyphView {
     return null;
   }
 
-  scy(i, sx, sy) {
+  scentery(i, sx, sy) {
     if (this.renderer.syss[i].length === 1) {
       // We don't have discontinuous objects so we're ok
       return this._get_snap_coord(this.sys[i]);

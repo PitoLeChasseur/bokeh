@@ -12,9 +12,10 @@ import * as visuals from "core/visuals";
 import {Anchor} from "core/enums"
 import {logger} from "core/logging";
 import {Arrayable} from "core/types"
+import {map} from "core/util/arrayable"
 import {extend} from "core/util/object";
 import {isArray} from "core/util/types";
-import {SpatialIndex} from "core/util/spatial"
+import {SpatialIndex, Rect} from "core/util/spatial"
 import {LineView} from "./line";
 import {Selection} from "../selections/selection";
 import {GlyphRendererView} from "../renderers/glyph_renderer"
@@ -31,12 +32,13 @@ export abstract class GlyphView extends View {
   glglyph?: any
 
   index: SpatialIndex
-
   renderer: GlyphRendererView
 
+  protected _nohit_warned: {[key: string]: boolean} = {}
 
   initialize(options: any): void {
     super.initialize(options);
+
     this._nohit_warned = {};
     this.renderer = options.renderer;
     this.visuals = new visuals.Visuals(this.model);
@@ -45,7 +47,7 @@ export abstract class GlyphView extends View {
     // and not done if it isn't ever set, but for now it only
     // matters in the unit tests because we build a view without a
     // renderer there)
-    const { ctx } = this.renderer.plot_view.canvas_view;
+    const {ctx} = this.renderer.plot_view.canvas_view;
 
     if (ctx.glcanvas != null) {
       let glglyphs;
@@ -55,16 +57,14 @@ export abstract class GlyphView extends View {
         if (e.code === 'MODULE_NOT_FOUND') {
           logger.warn('WebGL was requested and is supported, but bokeh-gl(.min).js is not available, falling back to 2D rendering.');
           glglyphs = null;
-        } else {
+        } else
           throw e;
-        }
       }
 
       if (glglyphs != null) {
         const Cls = glglyphs[this.model.type + 'GLGlyph'];
-        if (Cls != null) {
+        if (Cls != null)
           this.glglyph = new Cls(ctx.glcanvas.gl, this);
-        }
       }
     }
   }
@@ -72,12 +72,11 @@ export abstract class GlyphView extends View {
   set_visuals(source: ColumnarDataSource): void {
     this.visuals.warm_cache(source);
 
-    if (this.glglyph != null) {
+    if (this.glglyph != null)
       this.glglyph.set_visuals_changed();
-    }
   }
 
-  render(ctx: Context2d, indices: number[], data) {
+  render(ctx: Context2d, indices: number[], data: any): void {
     ctx.beginPath();
 
     if (this.glglyph != null) {
@@ -85,75 +84,77 @@ export abstract class GlyphView extends View {
         return
     }
 
-    return this._render(ctx, indices, data);
+    this._render(ctx, indices, data);
   }
 
   protected abstract _render(ctx: Context2d, indices: number[], data: any): void
 
-  has_finished() { return true; }
-
-  notify_finished() {
-    return this.renderer.notify_finished();
+  has_finished(): boolean {
+    return true
   }
 
-  bounds() {
-    if (this.index == null)
-      return bbox.empty()
-    else
-      return this._bounds(this.index.bbox)
+  notify_finished(): void {
+    this.renderer.notify_finished();
   }
 
-  log_bounds() {
-    if ((this.index == null)) {
-      return bbox.empty();
-    }
+  protected _bounds(bounds: Rect) {
+    return bounds
+  }
 
+  bounds(): Rect {
+    return this._bounds(this.index.bbox)
+  }
+
+  log_bounds(): Rect {
     const bb = bbox.empty();
+
     const positive_x_bbs = this.index.search(bbox.positive_x());
-    const positive_y_bbs = this.index.search(bbox.positive_y());
     for (const x of positive_x_bbs) {
-      if (x.minX < bb.minX) {
+      if (x.minX < bb.minX)
         bb.minX = x.minX;
-      }
-      if (x.maxX > bb.maxX) {
+      if (x.maxX > bb.maxX)
         bb.maxX = x.maxX;
-      }
     }
+
+    const positive_y_bbs = this.index.search(bbox.positive_y());
     for (const y of positive_y_bbs) {
-      if (y.minY < bb.minY) {
+      if (y.minY < bb.minY)
         bb.minY = y.minY;
-      }
-      if (y.maxY > bb.maxY) {
+      if (y.maxY > bb.maxY)
         bb.maxY = y.maxY;
-      }
     }
 
     return this._bounds(bb);
   }
 
   // this is available for subclasses to use, if appropriate.
-  max_wh2_bounds(bds) {
+  max_wh2_bounds(bds: Rect): Rect {
     return {
-        minX: bds.minX - this.max_w2,
-        maxX: bds.maxX + this.max_w2,
-        minY: bds.minY - this.max_h2,
-        maxY: bds.maxY + this.max_h2,
+      minX: bds.minX - this.max_w2,
+      maxX: bds.maxX + this.max_w2,
+      minY: bds.minY - this.max_h2,
+      maxY: bds.maxY + this.max_h2,
     };
   }
 
   get_anchor_point(anchor: Anchor, i: number, [sx, sy]: [number, number]): {x: number, y: number} | null {
     switch (anchor) {
-      case "center": return {x: this.scx(i, sx, sy), y: this.scy(i, sx, sy)};
+      case "center": return {x: this.scenterx(i, sx, sy), y: this.scentery(i, sx, sy)};
       default:       return null;
     }
   }
 
   // glyphs that need more sophisticated "snap to data" behaviour (like
   // snapping to a patch centroid, e.g, should override these
-  scx(i, _sx, _sy) { return this.sx[i]; }
-  scy(i, _sx, _sy) { return this.sy[i]; }
+  scenterx(i, _sx, _sy) {
+    return this.sx[i]
+  }
 
-  sdist(scale, pts, spans, pts_location = "edge", dilate = false) {
+  scentery(i, _sx, _sy) {
+    return this.sy[i]
+  }
+
+  sdist(scale, pts, spans, pts_location = "edge", dilate = false): Arrayable<number> {
     let pt0, pt1;
     if (scale.source_range.v_synthetic != null) {
       pts = scale.source_range.v_synthetic(pts);
@@ -189,23 +190,10 @@ export abstract class GlyphView extends View {
     const spt0 = scale.v_compute(pt0);
     const spt1 = scale.v_compute(pt1);
 
-    if (dilate) {
-      return ((() => {
-        const result = [];
-        for (let i = 0, end = spt0.length; i < end; i++) {
-          result.push(Math.ceil(Math.abs(spt1[i] - spt0[i])));
-        }
-        return result;
-      })());
-    } else {
-      return ((() => {
-        const result = [];
-        for (let i = 0, end = spt0.length; i < end; i++) {
-          result.push(Math.abs(spt1[i] - spt0[i]));
-        }
-        return result;
-      })());
-    }
+    if (dilate)
+      return map(spt0, (_, i) => Math.ceil(Math.abs(spt1[i] - spt0[i])))
+    else
+      return map(spt0, (_, i) => Math.abs(spt1[i] - spt0[i]))
   }
 
   draw_legend_for_index(_ctx: Context2d, _bbox: IBBox, _index: number): void {}
@@ -253,7 +241,7 @@ export abstract class GlyphView extends View {
     const func = `_hit_${geometry.type}`;
     if (this[func] != null) {
       result = this[func](geometry);
-    } else if ((this._nohit_warned[geometry.type] == null)) {
+    } else if (this._nohit_warned[geometry.type] == null) {
       logger.debug(`'${geometry.type}' selection not available for ${this.model.type}`);
       this._nohit_warned[geometry.type] = true;
     }
@@ -261,7 +249,7 @@ export abstract class GlyphView extends View {
     return result;
   }
 
-  _hit_rect_against_index(geometry: RectGeometry): Selection {
+  protected _hit_rect_against_index(geometry: RectGeometry): Selection {
     const {sx0, sx1, sy0, sy1} = geometry;
     const [x0, x1] = this.renderer.xscale.r_invert(sx0, sx1);
     const [y0, y1] = this.renderer.yscale.r_invert(sy0, sy1);
@@ -290,12 +278,11 @@ export abstract class GlyphView extends View {
     extend(this, data);
 
     if (this.renderer.plot_view.model.use_map) {
-      if (this._x != null) {
+      if (this._x != null)
         [this._x, this._y] = proj.project_xy(this._x, this._y);
-      }
-      if (this._xs != null) {
+
+      if (this._xs != null)
         [this._xs, this._ys] = proj.project_xsys(this._xs, this._ys);
-      }
     }
 
     // if we have any coordinates that are categorical, convert them to
@@ -303,22 +290,22 @@ export abstract class GlyphView extends View {
     if (this.renderer.plot_view.frame.x_ranges != null) {   // XXXX JUST TEMP FOR TESTS TO PASS
       const xr = this.renderer.plot_view.frame.x_ranges[this.model.x_range_name];
       const yr = this.renderer.plot_view.frame.y_ranges[this.model.y_range_name];
+
       for (let [xname, yname] of this.model._coords) {
         xname = `_${xname}`;
         yname = `_${yname}`;
-        if (xr.v_synthetic != null) {
+
+        if (xr.v_synthetic != null)
           this[xname] = xr.v_synthetic(this[xname]);
-        }
-        if (yr.v_synthetic != null) {
+        if (yr.v_synthetic != null)
           this[yname] = yr.v_synthetic(this[yname]);
-        }
       }
     }
 
     if (this.glglyph != null)
       this.glglyph.set_data_changed(this._x.length);
 
-    this._set_data(source, indices_to_update); //TODO doesn't take subset indices into account
+    this._set_data(source, indices_to_update)  //TODO doesn't take subset indices into account
 
     this.index_data()
   }
@@ -341,8 +328,6 @@ export abstract class GlyphView extends View {
 
   protected _mask_data?(): number[]
 
-  _bounds(bounds) { return bounds; }
-
   map_data(): void {
     // todo: if using gl, skip this (when is this called?)
 
@@ -360,7 +345,7 @@ export abstract class GlyphView extends View {
           this[syname].push(sy);
         }
       } else {
-        [ this[sxname], this[syname] ] = this.map_to_screen(this[xname], this[yname]);
+        [this[sxname], this[syname]] = this.map_to_screen(this[xname], this[yname]);
       }
     }
 
@@ -368,7 +353,7 @@ export abstract class GlyphView extends View {
   }
 
   // This is where specs not included in coords are computed, e.g. radius.
-  protected _map_data() {}
+  protected _map_data(): void {}
 
   map_to_screen(x: Arrayable<number>, y: Arrayable<number>): [Arrayable<number>, Arrayable<number>] {
     return this.renderer.plot_view.map_to_screen(x, y, this.model.x_range_name, this.model.y_range_name);
